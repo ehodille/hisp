@@ -1200,28 +1200,50 @@ def build_ufl_flux_expression(occurrences, value_off=0.0):
                 in_window = And(ge(t, start), lt(t, end))
                 t_rel = t - start
 
-                # For Bake+GDC: use GDC sub-timing for flux ramp profile
-                if p.pulse_type == "Bake+GDC" and getattr(p, 'gdc_ramp_up', None) is not None:
-                    ru = p.gdc_ramp_up
-                    ss = p.gdc_steady_state
-                    rd = p.gdc_ramp_down
+                if p.pulse_def == "timing":
+                    pulse_flux = value_off
+
+                    for i in range(len(p.timing_flux) - 1):
+                        t0 = p.timing_flux[i]
+                        t1 = p.timing_flux[i + 1]
+                        f0 = p.fraction_flux[i]
+                        f1 = p.fraction_flux[i + 1]
+
+                        segment_cond = And(ge(t_rel, t0), lt(t_rel, t1))
+
+                        slope = (f1 - f0) / (t1 - t0)
+                        # Linear segment expression for flux between t0 and t1
+                        segment_expr = occ[flux_key] * (f0 + slope * (t_rel - t0))
+
+                        pulse_flux += conditional(segment_cond, segment_expr, 0.0,)
+
+                    expr += conditional(in_window, pulse_flux, 0.0)
+
+                    continue
+
                 else:
-                    ru = p.ramp_up
-                    ss = p.steady_state
-                    rd = p.ramp_down
+                    # For Bake+GDC: use GDC sub-timing for flux ramp profile
+                    if p.pulse_type == "Bake+GDC" and getattr(p, 'gdc_ramp_up', None) is not None:
+                        ru = p.gdc_ramp_up
+                        ss = p.gdc_steady_state
+                        rd = p.gdc_ramp_down
+                    else:
+                        ru = p.ramp_up
+                        ss = p.steady_state
+                        rd = p.ramp_down
 
-                ramp_up_cond = lt(t_rel, ru)
-                steady_cond = And(ge(t_rel, ru), lt(t_rel, ru + ss))
+                    ramp_up_cond = lt(t_rel, ru)
+                    steady_cond = And(ge(t_rel, ru), lt(t_rel, ru + ss))
 
-                # Ramp-up and ramp-down expressions
-                ramp_up_expr = (occ[flux_key] - value_off) / ru * t_rel + value_off if ru > 0 else occ[flux_key]
-                ramp_down_raw = occ[flux_key] - (occ[flux_key] - value_off) / rd * (t_rel - (ru + ss)) if rd > 0 else occ[flux_key]
-                ramp_down_expr = conditional(ge(ramp_down_raw, value_off), ramp_down_raw, value_off)
+                    # Ramp-up and ramp-down expressions
+                    ramp_up_expr = (occ[flux_key] - value_off) / ru * t_rel + value_off if ru > 0 else occ[flux_key]
+                    ramp_down_raw = occ[flux_key] - (occ[flux_key] - value_off) / rd * (t_rel - (ru + ss)) if rd > 0 else occ[flux_key]
+                    ramp_down_expr = conditional(ge(ramp_down_raw, value_off), ramp_down_raw, value_off)
 
-                pulse_flux = conditional(ramp_up_cond, ramp_up_expr,
-                                         conditional(steady_cond, occ[flux_key], ramp_down_expr))
+                    pulse_flux = conditional(ramp_up_cond, ramp_up_expr,
+                                            conditional(steady_cond, occ[flux_key], ramp_down_expr))
 
-                expr += conditional(in_window, pulse_flux, 0.0)
+                    expr += conditional(in_window, pulse_flux, 0.0)
             return expr
         return flux_builder
 
